@@ -1,0 +1,130 @@
+{
+  "timestamp": "2025-09-26T17:44:02.211122",
+  "webhook_url": "https://promarketing1.bitrix24.ru/rest/9/fxn8xyfbalblll9s",
+  "sources": {
+    "deals": [
+      {
+        "ID": "11",
+        "ENTITY_ID": "SOURCE",
+        "STATUS_ID": "CALL",
+        "NAME": "Сайт",
+        "NAME_INIT": "Звонок",
+        "SORT": "10",
+        "SYSTEM": "Y",
+        "COLOR": "#",
+        "SEMANTICS": null,
+        "CATEGORY_ID": "0"
+      },
+      {
+        "ID": "25",
+        "ENTITY_ID": "SOURCE",
+        "STATUS_ID": "WEBFORM",
+        "NAME": "Яндекс.Карты",
+        "NAME_INIT": "CRM-форма",
+        "SORT": "20",
+        "SYSTEM": "Y",
+        "COLOR": "#",
+        "SEMANTICS": null,
+        "CATEGORY_ID": "0"
+      },
+      {
+        "ID": "27",
+        "ENTITY_ID": "SOURCE",
+        "STATUS_ID": "CALLBACK",
+        "NAME": "2ГИС",
+        "NAME_INIT": "Обратный звонок",
+        "SORT": "30",
+        "SYSTEM": "Y",
+        "COLOR": "#",
+        "SEMANTICS": null,
+        "CATEGORY_ID": "0"
+      },
+      {
+        "ID": "29",
+        "ENTITY_ID": "SOURCE",
+        "STATUS_ID": "RC_GENERATOR",
+        "NAME": "Авито",
+        "NAME_INIT": "Генератор продаж",
+        "SORT": "40",
+        "SYSTEM": "Y",
+        "COLOR": "#",
+        "SEMANTICS": null,
+        "CATEGORY_ID": "0"
+      },
+      {
+        "ID": "31",
+        "ENTITY_ID": "SOURCE",
+        "STATUS_ID": "STORE",
+        "NAME": "По рекомендации",
+        "NAME_INIT": "Интернет-магазин",
+        "SORT": "50",
+        "SYSTEM": "Y",
+        "COLOR": "#",
+        "SEMANTICS": null,
+        "CATEGORY_ID": "0"
+      },
+      {
+        "ID": "153",
+        "ENTITY_ID": "SOURCE",
+        "STATUS_ID": "REPEAT_SALE",
+        "NAME": "Яндекс.Услуги",
+        "NAME_INIT": "",
+        "SORT": "60",
+        "SYSTEM": "Y",
+        "COLOR": "#",
+        "SEMANTICS": null,
+        "CATEGORY_ID": "0"
+      },
+      {
+        "ID": "277",
+        "ENTITY_ID": "SOURCE",
+        "STATUS_ID": "1",
+        "NAME": "Партнеры",
+        "NAME_INIT": "",
+        "SORT": "70",
+        "SYSTEM": "N",
+        "COLOR": "#",
+        "SEMANTICS": null,
+        "CATEGORY_ID": "0"
+      },
+      {
+        "ID": "285",
+        "ENTITY_ID": "SOURCE",
+        "STATUS_ID": "2",
+        "NAME": "Яндекс.Контекст",
+        "NAME_INIT": "",
+        "SORT": "80",
+        "SYSTEM": "N",
+        "COLOR": "#",
+        "SEMANTICS": null,
+        "CATEGORY_ID": "0"
+      },
+      {
+        "ID": "289",
+        "ENTITY_ID": "SOURCE",
+        "STATUS_ID": "BOOKING",
+        "NAME": "Онлайн-запись",
+        "NAME_INIT": "Онлайн-запись",
+        "SORT": "81",
+        "SYSTEM": "Y",
+        "COLOR": null,
+        "SEMANTICS": null,
+        "CATEGORY_ID": "0"
+      },
+      {
+        "ID": "287",
+        "ENTITY_ID": "SOURCE",
+        "STATUS_ID": "3",
+        "NAME": "Соц. сети",
+        "NAME_INIT": "",
+        "SORT": "90",
+        "SYSTEM": "N",
+        "COLOR": "#",
+        "SEMANTICS": null,
+        "CATEGORY_ID": "0"
+      }
+    ],
+    "contacts": [],
+    "leads": []
+  }
+}

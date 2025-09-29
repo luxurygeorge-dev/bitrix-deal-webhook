@@ -1,0 +1,17 @@
+[Unit]
+Description=Bitrix24 Deal Webhook Service
+After=network.target
+
+[Service]
+Type=exec
+User=root
+WorkingDirectory=/root/projects/bitrix_deal_webhook
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/root/projects/bitrix_deal_webhook/.env
+ExecStart=/usr/local/bin/gunicorn --bind 0.0.0.0:5000 --workers 2 app:app
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+
