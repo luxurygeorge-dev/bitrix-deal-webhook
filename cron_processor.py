@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-CRON-процессор для автоматической обработки новых сделок
-Проверяет новые сделки каждые 5 минут и заполняет причины отказов
+CRON-процессор для Битрикс24
+Проверяет новые сделки каждую минуту и заполняет причины отказов
 """
 
 import os
@@ -17,7 +17,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('/var/log/bitrix_cron_processor.log'),
+        logging.FileHandler('/var/log/bitrix_cron.log'),
         logging.StreamHandler()
     ]
 )
@@ -52,40 +52,40 @@ class BitrixAPI:
     def update_deal(self, deal_id, fields):
         """Обновление сделки"""
         return self._make_request('crm.deal.update', {'ID': deal_id, 'fields': fields})
-    
-    def get_contact_deals(self, contact_id, limit=50):
-        """Получение сделок контакта"""
-        return self._make_request('crm.deal.list', {
-            'filter': {'CONTACT_ID': contact_id},
-            'select': ['ID', 'TITLE', 'STAGE_ID', 'UF_CRM_1747809816933'],
-            'order': {'DATE_CREATE': 'DESC'},
-            'start': 0
-        })
 
 class DealProcessor:
     """Процессор для обработки сделок"""
     
     def __init__(self, api_client):
         self.api = api_client
-        self.rejection_reason_field = os.getenv('REJECTION_REASON_FIELD', 'UF_CRM_1747809816933')
-        self.rejection_history_field = os.getenv('REJECTION_HISTORY_FIELD', 'UF_CRM_1755175908229')
-        self.max_field_length = int(os.getenv('MAX_FIELD_LENGTH', '2000'))
-        self.rejection_stages = os.getenv('CUSTOM_REJECTION_STAGES', 'LOSE').split(',')
+        self.rejection_history_field = 'UF_CRM_1755175908229'  # Поле истории отказов
+        self.max_field_length = 2000
     
-    def extract_rejection_reasons(self, deals):
-        """Извлечение причин отказов из сделок"""
-        reasons = []
-        
-        for deal in deals:
-            # Пропускаем текущую сделку
-            if deal.get('STAGE_ID') in self.rejection_stages:
-                reason = deal.get(self.rejection_reason_field, '')
-                if reason:
-                    reason = str(reason).strip()
-                    if reason and reason not in reasons:
-                        reasons.append(reason)
-        
-        return reasons
+    def get_contact_rejection_reasons(self, contact_id):
+        """Получение причин отказов из поля контакта"""
+        try:
+            # Получаем контакт
+            contact_data = self.api._make_request('crm.contact.get', {'ID': contact_id})
+            if not contact_data or 'result' not in contact_data:
+                return []
+            
+            contact = contact_data['result']
+            rejection_field = contact.get('UF_CRM_1755175983293', '')
+            
+            if not rejection_field:
+                return []
+            
+            # Если это строка, разбиваем по переносам строк
+            if isinstance(rejection_field, str):
+                reasons = [line.strip() for line in rejection_field.split('\n') if line.strip()]
+            else:
+                reasons = [str(rejection_field).strip()]
+            
+            return [r for r in reasons if r]
+            
+        except Exception as e:
+            logger.error(f"Error getting contact rejection reasons: {e}")
+            return []
     
     def process_deal(self, deal_id):
         """Обработка конкретной сделки"""
@@ -107,17 +107,9 @@ class DealProcessor:
             
             logger.info(f"Processing deal {deal_id} for contact {contact_id}")
             
-            # Получаем все сделки контакта
-            deals_data = self.api.get_contact_deals(contact_id)
-            if not deals_data or 'result' not in deals_data:
-                logger.error(f"Failed to get deals for contact {contact_id}")
-                return False
-            
-            deals = deals_data['result']
-            logger.info(f"Found {len(deals)} deals for contact {contact_id}")
-            
-            # Извлекаем причины отказов
-            rejection_reasons = self.extract_rejection_reasons(deals)
+            # Получаем причины отказов из поля контакта
+            rejection_reasons = self.get_contact_rejection_reasons(contact_id)
+            logger.info(f"Found {len(rejection_reasons)} rejection reasons in contact {contact_id}")
             
             if not rejection_reasons:
                 logger.info(f"No rejection reasons found for contact {contact_id}")
@@ -148,10 +140,10 @@ class DealProcessor:
             logger.error(f"Error processing deal {deal_id}: {e}")
             return False
 
-def get_recent_deals(api_client, hours=1):
+def get_recent_deals(api_client, hours=3):
     """Получение недавно созданных сделок"""
     try:
-        # Получаем сделки за последний час
+        # Получаем сделки за последние 3 часа
         since = datetime.now() - timedelta(hours=hours)
         since_str = since.strftime('%Y-%m-%d %H:%M:%S')
         
@@ -188,7 +180,7 @@ def main():
         processor = DealProcessor(api)
         
         # Получаем недавние сделки
-        recent_deals = get_recent_deals(api, hours=1)
+        recent_deals = get_recent_deals(api, hours=3)
         logger.info(f"Found {len(recent_deals)} recent deals")
         
         processed_count = 0
@@ -206,5 +198,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

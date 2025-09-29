@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Битрикс24 Webhook Handler для копирования причин отказов
-Обрабатывает создание сделок и копирует причины отказов из предыдущих сделок контакта
+Flask приложение для обработки вебхуков Битрикс24
+Автоматически заполняет поля "Предыдущие причины отказов" в сделках
 """
 
 import os
 import json
 import logging
 import requests
-from datetime import datetime
 from flask import Flask, request, jsonify
-# from typing import List, Dict, Optional, Any  # Закомментировано для совместимости
+from datetime import datetime
 
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('webhook.log'),
+        logging.FileHandler('/var/log/bitrix_webhook.log'),
         logging.StreamHandler()
     ]
 )
@@ -30,281 +29,128 @@ class BitrixAPI:
     """Класс для работы с API Битрикс24"""
     
     def __init__(self, webhook_url):
-        """
-        Инициализация API клиента
-        
-        Args:
-            webhook_url: URL вебхука для REST API Битрикс24
-        """
         self.webhook_url = webhook_url.rstrip('/')
         self.session = requests.Session()
         self.session.headers.update({
             'Content-Type': 'application/json',
-            'User-Agent': 'BitrixDealWebhook/1.0'
+            'User-Agent': 'BitrixWebhookHandler/1.0'
         })
     
     def _make_request(self, method, params=None):
-        """
-        Выполнение запроса к API Битрикс24
-        
-        Args:
-            method: Метод API
-            params: Параметры запроса
-            
-        Returns:
-            Ответ API или None в случае ошибки
-        """
+        """Выполнение запроса к API Битрикс24"""
+        url = f"{self.webhook_url}/{method}.json"
         try:
-            url = "{}/{}".format(self.webhook_url, method)
             response = self.session.post(url, json=params or {})
             response.raise_for_status()
-            
-            data = response.json()
-            if 'error' in data:
-                logger.error("API Error: {}".format(data['error']))
-                return None
-                
-            return data.get('result')
-            
-        except requests.exceptions.RequestException as e:
-            logger.error("Request failed: {}".format(e))
-            return None
-        except json.JSONDecodeError as e:
-            logger.error("JSON decode error: {}".format(e))
+            return response.json()
+        except Exception as e:
+            logger.error(f"API request failed: {e}")
             return None
     
     def get_deal(self, deal_id):
-        """Получение данных сделки"""
-        return self._make_request('crm.deal.get', {'id': deal_id})
-    
-    def get_deals_by_contact(self, contact_id):
-        """
-        Получение всех сделок контакта
-        
-        Args:
-            contact_id: ID контакта
-            
-        Returns:
-            Список сделок контакта
-        """
-        deals = []
-        start = 0
-        
-        while True:
-            result = self._make_request('crm.deal.list', {
-                'filter': {'CONTACT_ID': contact_id},
-                'select': ['ID', 'TITLE', 'STAGE_ID', 'DATE_CREATE', 'DATE_MODIFY'] + 
-                         [REJECTION_REASON_FIELD],
-                'start': start,
-                'order': {'DATE_CREATE': 'DESC'}
-            })
-            
-            if not result:
-                break
-                
-            deals.extend(result)
-            
-            # Проверяем, есть ли еще данные
-            if len(result) < 50:  # По умолчанию Битрикс возвращает до 50 записей
-                break
-                
-            start += 50
-        
-        logger.info("Found {} deals for contact {}".format(len(deals), contact_id))
-        return deals
+        """Получение сделки по ID"""
+        return self._make_request('crm.deal.get', {'ID': deal_id})
     
     def update_deal(self, deal_id, fields):
-        """
-        Обновление полей сделки
-        
-        Args:
-            deal_id: ID сделки
-            fields: Поля для обновления
-            
-        Returns:
-            True если обновление прошло успешно
-        """
-        result = self._make_request('crm.deal.update', {
-            'id': deal_id,
-            'fields': fields
-        })
-        
-        return result is not None
+        """Обновление сделки"""
+        return self._make_request('crm.deal.update', {'ID': deal_id, 'fields': fields})
 
 class DealProcessor:
-    """Класс для обработки логики сделок"""
+    """Процессор для обработки сделок"""
     
-    def __init__(self, bitrix_api):
-        self.api = bitrix_api
+    def __init__(self, api_client):
+        self.api = api_client
+        self.rejection_history_field = os.getenv('REJECTION_HISTORY_FIELD', 'UF_CRM_1755175908229')
+        self.max_field_length = int(os.getenv('MAX_FIELD_LENGTH', '2000'))
     
-    def extract_rejection_reasons(self, deals):
-        """
-        Извлечение причин отказов из списка сделок
-        
-        Args:
-            deals: Список сделок
-            
-        Returns:
-            Список причин отказов (без пустых значений)
-        """
-        reasons = []
-        
-        for deal in deals:
-            # Проверяем, что сделка имеет статус отказа
-            stage_id = deal.get('STAGE_ID', '')
-            if not self._is_rejection_stage(stage_id):
-                continue
-                
-            # Извлекаем причину отказа
-            reason = deal.get(REJECTION_REASON_FIELD, '')
-            if reason:
-                reason = str(reason).strip()
-                if reason and reason not in reasons:
-                    reasons.append(reason)
-        
-        return reasons
-    
-    def _is_rejection_stage(self, stage_id):
-        """
-        Проверка, является ли стадия сделки отказом
-        
-        Args:
-            stage_id: ID стадии сделки
-            
-        Returns:
-            True если стадия является отказом
-        """
-        # Стандартные стадии отказа в Битрикс24
-        rejection_stages = [
-            'LOSE',  # Проиграна
-            'C1:LOSE',  # Проиграна (воронка 1)
-            'C2:LOSE',  # Проиграна (воронка 2)
-            'C3:LOSE',  # Проиграна (воронка 3)
-        ]
-        
-        # Добавляем кастомные стадии отказа если они указаны в настройках
-        if CUSTOM_REJECTION_STAGES:
-            rejection_stages.extend(CUSTOM_REJECTION_STAGES)
-        
-        return stage_id in rejection_stages
-    
-    def format_rejection_reasons(self, reasons):
-        """
-        Форматирование списка причин отказов
-        
-        Args:
-            reasons: Список причин
-            
-        Returns:
-            Отформатированная строка с причинами
-        """
-        if not reasons:
-            return ""
-        
-        # Нумерованный список причин
-        formatted_reasons = []
-        for i, reason in enumerate(reasons, 1):
-            formatted_reasons.append("{}. {}".format(i, reason))
-        
-        result = "Предыдущие причины отказов:\n" + "\n".join(formatted_reasons)
-        
-        # Ограничиваем длину если необходимо
-        if len(result) > MAX_FIELD_LENGTH:
-            result = result[:MAX_FIELD_LENGTH - 3] + "..."
-        
-        return result
-    
-    def process_new_deal(self, deal_id):
-        """
-        Обработка новой сделки - поиск и копирование причин отказов
-        
-        Args:
-            deal_id: ID новой сделки
-            
-        Returns:
-            True если обработка прошла успешно
-        """
+    def get_contact_rejection_reasons(self, contact_id):
+        """Получение причин отказов из поля контакта"""
         try:
-            # Получаем данные новой сделки
-            deal = self.api.get_deal(deal_id)
-            if not deal:
-                logger.error("Failed to get deal {}".format(deal_id))
-                return False
+            # Получаем контакт
+            contact_data = self.api._make_request('crm.contact.get', {'ID': contact_id})
+            if not contact_data or 'result' not in contact_data:
+                return []
             
-            # Получаем ID контакта
-            contact_id = deal.get('CONTACT_ID')
-            if not contact_id:
-                logger.info("Deal {} has no contact, skipping".format(deal_id))
-                return True
+            contact = contact_data['result']
+            rejection_field = contact.get('UF_CRM_1755175983293', '')
             
-            logger.info("Processing deal {} for contact {}".format(deal_id, contact_id))
+            if not rejection_field:
+                return []
             
-            # Получаем все сделки контакта (кроме текущей)
-            all_deals = self.api.get_deals_by_contact(contact_id)
-            previous_deals = [d for d in all_deals if int(d['ID']) != deal_id]
-            
-            if not previous_deals:
-                logger.info("No previous deals found for contact {}".format(contact_id))
-                return True
-            
-            # Извлекаем причины отказов
-            rejection_reasons = self.extract_rejection_reasons(previous_deals)
-            
-            if not rejection_reasons:
-                logger.info("No rejection reasons found for contact {}".format(contact_id))
-                return True
-            
-            # Форматируем и записываем в поле сделки
-            formatted_reasons = self.format_rejection_reasons(rejection_reasons)
-            
-            success = self.api.update_deal(deal_id, {
-                REJECTION_HISTORY_FIELD: formatted_reasons
-            })
-            
-            if success:
-                logger.info("Successfully updated deal {} with {} rejection reasons".format(deal_id, len(rejection_reasons)))
+            # Если это строка, разбиваем по переносам строк
+            if isinstance(rejection_field, str):
+                reasons = [line.strip() for line in rejection_field.split('\n') if line.strip()]
             else:
-                logger.error("Failed to update deal {}".format(deal_id))
+                reasons = [str(rejection_field).strip()]
             
-            return success
+            return [r for r in reasons if r]
             
         except Exception as e:
-            logger.error("Error processing deal {}: {}".format(deal_id, e))
+            logger.error(f"Error getting contact rejection reasons: {e}")
+            return []
+    
+    def process_new_deal(self, deal_id):
+        """Обработка новой сделки"""
+        try:
+            logger.info(f"Processing deal {deal_id}")
+            
+            # Получаем сделку
+            deal_data = self.api.get_deal(deal_id)
+            if not deal_data or 'result' not in deal_data:
+                logger.error(f"Failed to get deal {deal_id}")
+                return False
+            
+            deal = deal_data['result']
+            contact_id = deal.get('CONTACT_ID')
+            
+            if not contact_id:
+                logger.warning(f"Deal {deal_id} has no contact")
+                return False
+            
+            logger.info(f"Processing deal {deal_id} for contact {contact_id}")
+            
+            # Получаем причины отказов из поля контакта
+            rejection_reasons = self.get_contact_rejection_reasons(contact_id)
+            logger.info(f"Found {len(rejection_reasons)} rejection reasons in contact {contact_id}")
+            
+            if not rejection_reasons:
+                logger.info(f"No rejection reasons found for contact {contact_id}")
+                return True
+            
+            # Формируем текст для поля истории
+            history_text = "Предыдущие причины отказов:\n"
+            for i, reason in enumerate(rejection_reasons, 1):
+                history_text += f"{i}. {reason}\n"
+            
+            # Обрезаем до максимальной длины
+            if len(history_text) > self.max_field_length:
+                history_text = history_text[:self.max_field_length-3] + "..."
+            
+            # Обновляем сделку
+            update_result = self.api.update_deal(deal_id, {
+                self.rejection_history_field: [history_text]
+            })
+            
+            if update_result and update_result.get('result'):
+                logger.info(f"Successfully updated deal {deal_id} with {len(rejection_reasons)} rejection reasons")
+                return True
+            else:
+                logger.error(f"Failed to update deal {deal_id}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error processing deal {deal_id}: {e}")
             return False
 
-# Глобальные настройки (будут загружены из переменных окружения)
-BITRIX_WEBHOOK_URL = os.getenv('BITRIX_WEBHOOK_URL', '')
-REJECTION_REASON_FIELD = os.getenv('REJECTION_REASON_FIELD', 'UF_CRM_REJECTION_REASON')
-REJECTION_HISTORY_FIELD = os.getenv('REJECTION_HISTORY_FIELD', 'UF_CRM_REJECTION_HISTORY')
-MAX_FIELD_LENGTH = int(os.getenv('MAX_FIELD_LENGTH', '2000'))
-CUSTOM_REJECTION_STAGES = os.getenv('CUSTOM_REJECTION_STAGES', '').split(',') if os.getenv('CUSTOM_REJECTION_STAGES') else []
-
-# Инициализация компонентов
-bitrix_api = None
-deal_processor = None
-
-def init_app():
-    """Инициализация приложения"""
-    global bitrix_api, deal_processor
-    
-    if not BITRIX_WEBHOOK_URL:
-        logger.error("BITRIX_WEBHOOK_URL not configured")
-        return False
-    
-    bitrix_api = BitrixAPI(BITRIX_WEBHOOK_URL)
-    deal_processor = DealProcessor(bitrix_api)
-    
-    logger.info("Application initialized successfully")
-    return True
-
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Проверка работоспособности сервиса"""
-    return jsonify({
-        'status': 'ok',
-        'timestamp': datetime.now().isoformat(),
-        'configured': bool(BITRIX_WEBHOOK_URL)
-    })
+# Инициализация API клиента
+webhook_url = os.getenv('BITRIX_WEBHOOK_URL')
+if webhook_url:
+    api = BitrixAPI(webhook_url)
+    deal_processor = DealProcessor(api)
+    logger.info("Deal processor initialized")
+else:
+    logger.error("BITRIX_WEBHOOK_URL not configured")
+    deal_processor = None
 
 @app.route('/webhook/deal', methods=['POST'])
 def deal_webhook():
@@ -333,7 +179,7 @@ def deal_webhook():
         event = data.get('event')
         deal_id = data.get('data', {}).get('FIELDS', {}).get('ID')
         auth_data = data.get('auth', {})
-        
+
         if event not in ['ONCRMDEALADD', 'ONCRMDEALUPDATE']:
             logger.info("Ignoring event {}".format(event))
             return jsonify({'message': 'Event ignored'}), 200
@@ -354,45 +200,6 @@ def deal_webhook():
             
     except Exception as e:
         logger.error("Webhook processing error: {}".format(e))
-        return jsonify({'error': 'Internal server error'}), 500
-
-@app.route('/test/deal/<int:deal_id>', methods=['POST'])
-def test_deal_processing(deal_id):
-    """
-    Тестовый endpoint для проверки обработки сделки
-    Полезно для отладки без вебхуков
-    """
-    if not deal_processor:
-        return jsonify({'error': 'Service not configured'}), 500
-    
-    success = deal_processor.process_new_deal(deal_id)
-    
-    if success:
-        return jsonify({'message': 'Deal {} processed successfully'.format(deal_id)}), 200
-    else:
-        return jsonify({'error': 'Failed to process deal {}'.format(deal_id)}), 500
-
-@app.route('/test/webhook', methods=['POST'])
-def test_webhook():
-    """
-    Тестовый endpoint для проверки вебхука
-    """
-    try:
-        logger.info("=== TEST WEBHOOK RECEIVED ===")
-        logger.info("Headers: {}".format(dict(request.headers)))
-        logger.info("Raw data: {}".format(request.get_data()))
-        logger.info("JSON data: {}".format(request.get_json()))
-        logger.info("=============================")
-        
-        return jsonify({
-            'message': 'Test webhook received successfully',
-            'timestamp': datetime.now().isoformat(),
-            'headers': dict(request.headers),
-            'data': request.get_json()
-        }), 200
-        
-    except Exception as e:
-        logger.error("Test webhook error: {}".format(e))
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/webhook', methods=['POST'])
@@ -430,21 +237,32 @@ def api_deal_webhook():
     """
     return deal_webhook()
 
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({'error': 'Endpoint not found'}), 404
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Проверка здоровья сервиса"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'webhook_configured': deal_processor is not None
+    })
 
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({'error': 'Internal server error'}), 500
-
-# Инициализация при запуске модуля
-init_app()
+@app.route('/', methods=['GET'])
+def root():
+    """Корневой маршрут"""
+    return jsonify({
+        'service': 'Bitrix24 Deal Webhook Handler',
+        'version': '1.0.0',
+        'status': 'running',
+        'endpoints': [
+            '/webhook/deal',
+            '/webhook',
+            '/bitrix/webhook',
+            '/bitrix/webhook/deal',
+            '/api/webhook',
+            '/api/webhook/deal',
+            '/health'
+        ]
+    })
 
 if __name__ == '__main__':
-    if bitrix_api and deal_processor:
-        # Запуск в режиме разработки
-        app.run(host='0.0.0.0', port=5000, debug=False)
-    else:
-        logger.error("Failed to initialize application")
-        exit(1)
+    app.run(host='0.0.0.0', port=5000, debug=False)
